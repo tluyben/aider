@@ -31,6 +31,18 @@ class LazyLiteLLM:
         self._lazy_module.set_verbose = False
         self._lazy_module.drop_params = True
 
+    def completion(self, model, messages, temperature=0, stream=False, functions=None, extra_headers=None, max_tokens=None, **kwargs):
+        if model == "custom-claude-compatible":
+            return send_custom_claude_compatible_request(
+                model, messages, temperature=temperature, stream=stream,
+                functions=functions, extra_headers=extra_headers, max_tokens=max_tokens
+            )
+        self._load_litellm()
+        return self._lazy_module.completion(
+            model=model, messages=messages, temperature=temperature, stream=stream,
+            functions=functions, extra_headers=extra_headers, max_tokens=max_tokens, **kwargs
+        )
+
 
 litellm = LazyLiteLLM()
 
