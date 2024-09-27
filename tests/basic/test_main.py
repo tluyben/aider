@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ import git
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 
+from aider.coders import Coder
 from aider.dump import dump  # noqa: F401
 from aider.io import InputOutput
 from aider.main import check_gitignore, main, setup_git
@@ -20,34 +22,42 @@ class TestMain(TestCase):
     def setUp(self):
         self.original_env = os.environ.copy()
         os.environ["OPENAI_API_KEY"] = "deadbeef"
+        os.environ["AIDER_CHECK_UPDATE"] = "false"
         self.original_cwd = os.getcwd()
         self.tempdir_obj = IgnorantTemporaryDirectory()
         self.tempdir = self.tempdir_obj.name
         os.chdir(self.tempdir)
+        # Fake home directory prevents tests from using the real ~/.aider.conf.yml file:
+        self.homedir_obj = IgnorantTemporaryDirectory()
+        os.environ["HOME"] = self.homedir_obj.name
+        self.input_patcher = patch("builtins.input", return_value=None)
+        self.mock_input = self.input_patcher.start()
 
     def tearDown(self):
         os.chdir(self.original_cwd)
         self.tempdir_obj.cleanup()
+        self.homedir_obj.cleanup()
         os.environ.clear()
         os.environ.update(self.original_env)
+        self.input_patcher.stop()
 
     def test_main_with_empty_dir_no_files_on_command(self):
-        main(["--no-git"], input=DummyInput(), output=DummyOutput())
+        main(["--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
 
     def test_main_with_emptqy_dir_new_file(self):
-        main(["foo.txt", "--yes", "--no-git"], input=DummyInput(), output=DummyOutput())
+        main(["foo.txt", "--yes", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
         self.assertTrue(os.path.exists("foo.txt"))
 
     @patch("aider.repo.GitRepo.get_commit_message", return_value="mock commit message")
     def test_main_with_empty_git_dir_new_file(self, _):
         make_repo()
-        main(["--yes", "foo.txt"], input=DummyInput(), output=DummyOutput())
+        main(["--yes", "foo.txt", "--exit"], input=DummyInput(), output=DummyOutput())
         self.assertTrue(os.path.exists("foo.txt"))
 
     @patch("aider.repo.GitRepo.get_commit_message", return_value="mock commit message")
     def test_main_with_empty_git_dir_new_files(self, _):
         make_repo()
-        main(["--yes", "foo.txt", "bar.txt"], input=DummyInput(), output=DummyOutput())
+        main(["--yes", "foo.txt", "bar.txt", "--exit"], input=DummyInput(), output=DummyOutput())
         self.assertTrue(os.path.exists("foo.txt"))
         self.assertTrue(os.path.exists("bar.txt"))
 
@@ -64,7 +74,7 @@ class TestMain(TestCase):
         subdir.mkdir()
         make_repo(str(subdir))
         main(
-            ["--yes", str(subdir / "foo.txt"), str(subdir / "bar.txt")],
+            ["--yes", str(subdir / "foo.txt"), str(subdir / "bar.txt"), "--exit"],
             input=DummyInput(),
             output=DummyOutput(),
         )
@@ -98,7 +108,7 @@ class TestMain(TestCase):
         # This will throw a git error on windows if get_tracked_files doesn't
         # properly convert git/posix/paths to git\posix\paths.
         # Because aider will try and `git add` a file that's already in the repo.
-        main(["--yes", str(fname)], input=DummyInput(), output=DummyOutput())
+        main(["--yes", str(fname), "--exit"], input=DummyInput(), output=DummyOutput())
 
     def test_setup_git(self):
         io = InputOutput(pretty=False, yes=True)
@@ -224,6 +234,16 @@ class TestMain(TestCase):
 
                     main(["--yes", fname, "--encoding", "iso-8859-15"])
 
+    def test_main_exit_calls_version_check(self):
+        with GitTemporaryDirectory():
+            with (
+                patch("aider.main.check_version") as mock_check_version,
+                patch("aider.main.InputOutput") as mock_input_output,
+            ):
+                main(["--exit", "--check-update"], input=DummyInput(), output=DummyOutput())
+                mock_check_version.assert_called_once()
+                mock_input_output.assert_called_once()
+
     @patch("aider.main.InputOutput")
     @patch("aider.coders.base_coder.Coder.run")
     def test_main_message_adds_to_input_history(self, mock_run, MockInputOutput):
@@ -253,23 +273,25 @@ class TestMain(TestCase):
         self.assertEqual(args[1], None)
 
     def test_dark_mode_sets_code_theme(self):
-        # Mock Coder.create to capture the configuration
-        with patch("aider.coders.Coder.create") as MockCoder:
-            main(["--dark-mode", "--no-git"], input=DummyInput(), output=DummyOutput())
-            # Ensure Coder.create was called
-            MockCoder.assert_called_once()
+        # Mock InputOutput to capture the configuration
+        with patch("aider.main.InputOutput") as MockInputOutput:
+            MockInputOutput.return_value.get_input.return_value = None
+            main(["--dark-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
+            # Ensure InputOutput was called
+            MockInputOutput.assert_called_once()
             # Check if the code_theme setting is for dark mode
-            _, kwargs = MockCoder.call_args
+            _, kwargs = MockInputOutput.call_args
             self.assertEqual(kwargs["code_theme"], "monokai")
 
     def test_light_mode_sets_code_theme(self):
-        # Mock Coder.create to capture the configuration
-        with patch("aider.coders.Coder.create") as MockCoder:
-            main(["--light-mode", "--no-git"], input=DummyInput(), output=DummyOutput())
-            # Ensure Coder.create was called
-            MockCoder.assert_called_once()
+        # Mock InputOutput to capture the configuration
+        with patch("aider.main.InputOutput") as MockInputOutput:
+            MockInputOutput.return_value.get_input.return_value = None
+            main(["--light-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
+            # Ensure InputOutput was called
+            MockInputOutput.assert_called_once()
             # Check if the code_theme setting is for light mode
-            _, kwargs = MockCoder.call_args
+            _, kwargs = MockInputOutput.call_args
             self.assertEqual(kwargs["code_theme"], "default")
 
     def create_env_file(self, file_name, content):
@@ -279,25 +301,29 @@ class TestMain(TestCase):
 
     def test_env_file_flag_sets_automatic_variable(self):
         env_file_path = self.create_env_file(".env.test", "AIDER_DARK_MODE=True")
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("aider.main.InputOutput") as MockInputOutput:
+            MockInputOutput.return_value.get_input.return_value = None
+            MockInputOutput.return_value.get_input.confirm_ask = True
             main(
-                ["--env-file", str(env_file_path), "--no-git"],
+                ["--env-file", str(env_file_path), "--no-git", "--exit"],
                 input=DummyInput(),
                 output=DummyOutput(),
             )
-            MockCoder.assert_called_once()
+            MockInputOutput.assert_called_once()
             # Check if the color settings are for dark mode
-            _, kwargs = MockCoder.call_args
+            _, kwargs = MockInputOutput.call_args
             self.assertEqual(kwargs["code_theme"], "monokai")
 
     def test_default_env_file_sets_automatic_variable(self):
         self.create_env_file(".env", "AIDER_DARK_MODE=True")
-        with patch("aider.coders.Coder.create") as MockCoder:
-            main(["--no-git"], input=DummyInput(), output=DummyOutput())
-            # Ensure Coder.create was called
-            MockCoder.assert_called_once()
+        with patch("aider.main.InputOutput") as MockInputOutput:
+            MockInputOutput.return_value.get_input.return_value = None
+            MockInputOutput.return_value.get_input.confirm_ask = True
+            main(["--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
+            # Ensure InputOutput was called
+            MockInputOutput.assert_called_once()
             # Check if the color settings are for dark mode
-            _, kwargs = MockCoder.call_args
+            _, kwargs = MockInputOutput.call_args
             self.assertEqual(kwargs["code_theme"], "monokai")
 
     def test_false_vals_in_env_file(self):
@@ -352,7 +378,7 @@ class TestMain(TestCase):
     def test_verbose_mode_lists_env_vars(self):
         self.create_env_file(".env", "AIDER_DARK_MODE=on")
         with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
-            main(["--no-git", "--verbose"], input=DummyInput(), output=DummyOutput())
+            main(["--no-git", "--verbose", "--exit"], input=DummyInput(), output=DummyOutput())
             output = mock_stdout.getvalue()
             relevant_output = "\n".join(
                 line
@@ -363,6 +389,67 @@ class TestMain(TestCase):
             self.assertIn("dark_mode", relevant_output)
             self.assertRegex(relevant_output, r"AIDER_DARK_MODE:\s+on")
             self.assertRegex(relevant_output, r"dark_mode:\s+True")
+
+    def test_yaml_config_file_loading(self):
+        with GitTemporaryDirectory() as git_dir:
+            git_dir = Path(git_dir)
+
+            # Create fake home directory
+            fake_home = git_dir / "fake_home"
+            fake_home.mkdir()
+            os.environ["HOME"] = str(fake_home)
+
+            # Create subdirectory as current working directory
+            cwd = git_dir / "subdir"
+            cwd.mkdir()
+            os.chdir(cwd)
+
+            # Create .aider.conf.yml files in different locations
+            home_config = fake_home / ".aider.conf.yml"
+            git_config = git_dir / ".aider.conf.yml"
+            cwd_config = cwd / ".aider.conf.yml"
+            named_config = git_dir / "named.aider.conf.yml"
+
+            cwd_config.write_text("model: gpt-4-32k\nmap-tokens: 4096\n")
+            git_config.write_text("model: gpt-4\nmap-tokens: 2048\n")
+            home_config.write_text("model: gpt-3.5-turbo\nmap-tokens: 1024\n")
+            named_config.write_text("model: gpt-4-1106-preview\nmap-tokens: 8192\n")
+
+            with (
+                patch("pathlib.Path.home", return_value=fake_home),
+                patch("aider.coders.Coder.create") as MockCoder,
+            ):
+                # Test loading from specified config file
+                main(
+                    ["--yes", "--exit", "--config", str(named_config)],
+                    input=DummyInput(),
+                    output=DummyOutput(),
+                )
+                _, kwargs = MockCoder.call_args
+                self.assertEqual(kwargs["main_model"].name, "gpt-4-1106-preview")
+                self.assertEqual(kwargs["map_tokens"], 8192)
+
+                # Test loading from current working directory
+                main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
+                _, kwargs = MockCoder.call_args
+                print("kwargs:", kwargs)  # Add this line for debugging
+                self.assertIn("main_model", kwargs, "main_model key not found in kwargs")
+                self.assertEqual(kwargs["main_model"].name, "gpt-4-32k")
+                self.assertEqual(kwargs["map_tokens"], 4096)
+
+                # Test loading from git root
+                cwd_config.unlink()
+                main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
+                _, kwargs = MockCoder.call_args
+                self.assertEqual(kwargs["main_model"].name, "gpt-4")
+                self.assertEqual(kwargs["map_tokens"], 2048)
+
+                # Test loading from home directory
+                git_config.unlink()
+                main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
+                _, kwargs = MockCoder.call_args
+                self.assertEqual(kwargs["main_model"].name, "gpt-3.5-turbo")
+                self.assertEqual(kwargs["map_tokens"], 1024)
 
     def test_map_tokens_option(self):
         with GitTemporaryDirectory():
@@ -418,3 +505,149 @@ class TestMain(TestCase):
                 self.assertIn(real_external_file_path, coder.abs_read_only_fnames)
         finally:
             os.unlink(external_file_path)
+
+    def test_model_metadata_file(self):
+        with GitTemporaryDirectory():
+            metadata_file = Path(".aider.model.metadata.json")
+
+            # must be a fully qualified model name: provider/...
+            metadata_content = {"deepseek/deepseek-chat": {"max_input_tokens": 1234}}
+            metadata_file.write_text(json.dumps(metadata_content))
+
+            coder = main(
+                [
+                    "--model",
+                    "deepseek/deepseek-chat",
+                    "--model-metadata-file",
+                    str(metadata_file),
+                    "--exit",
+                    "--yes",
+                ],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+
+            self.assertEqual(coder.main_model.info["max_input_tokens"], 1234)
+
+    def test_sonnet_and_cache_options(self):
+        with GitTemporaryDirectory():
+            with patch("aider.coders.base_coder.RepoMap") as MockRepoMap:
+                mock_repo_map = MagicMock()
+                mock_repo_map.max_map_tokens = 1000  # Set a specific value
+                MockRepoMap.return_value = mock_repo_map
+
+                main(
+                    ["--sonnet", "--cache-prompts", "--exit", "--yes"],
+                    input=DummyInput(),
+                    output=DummyOutput(),
+                )
+
+                MockRepoMap.assert_called_once()
+                call_args, call_kwargs = MockRepoMap.call_args
+                self.assertEqual(
+                    call_kwargs.get("refresh"), "files"
+                )  # Check the 'refresh' keyword argument
+
+    def test_sonnet_and_cache_prompts_options(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--sonnet", "--cache-prompts", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+
+            self.assertTrue(coder.add_cache_headers)
+
+    def test_4o_and_cache_options(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--4o", "--cache-prompts", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+
+            self.assertFalse(coder.add_cache_headers)
+
+    def test_return_coder(self):
+        with GitTemporaryDirectory():
+            result = main(
+                ["--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertIsInstance(result, Coder)
+
+            result = main(
+                ["--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=False,
+            )
+            self.assertIsNone(result)
+
+    def test_map_mul_option(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--map-mul", "5", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertIsInstance(coder, Coder)
+            self.assertEqual(coder.repo_map.map_mul_no_files, 5)
+
+    def test_suggest_shell_commands_default(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertTrue(coder.suggest_shell_commands)
+
+    def test_suggest_shell_commands_disabled(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--no-suggest-shell-commands", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertFalse(coder.suggest_shell_commands)
+
+    def test_suggest_shell_commands_enabled(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--suggest-shell-commands", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertTrue(coder.suggest_shell_commands)
+
+    def test_chat_language_spanish(self):
+        with GitTemporaryDirectory():
+            coder = main(
+                ["--chat-language", "Spanish", "--exit", "--yes"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            system_info = coder.get_platform_info()
+            self.assertIn("Spanish", system_info)
+
+    @patch("git.Repo.init")
+    def test_main_exit_with_git_command_not_found(self, mock_git_init):
+        mock_git_init.side_effect = git.exc.GitCommandNotFound("git", "Command 'git' not found")
+
+        try:
+            result = main(["--exit", "--yes"], input=DummyInput(), output=DummyOutput())
+        except Exception as e:
+            self.fail(f"main() raised an unexpected exception: {e}")
+
+        self.assertIsNone(result, "main() should return None when called with --exit")

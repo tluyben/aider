@@ -10,6 +10,19 @@ text = open("README.md").read()
 text = text.replace('['*3 + 'cog', ' NOOP ')
 text = text.replace('['*3 + 'end', ' NOOP ')
 text = text.replace(']'*3, '')
+
+# embedding these confuses the syntax highlighter while editing index.md
+com_open = '<!' + '--'
+com_close = '--' + '>'
+
+# comment out the screencast
+text = text.replace('SCREENCAST START ' + com_close, '')
+text = text.replace(com_open + ' SCREENCAST END', '')
+
+# uncomment the video
+text = text.replace('VIDEO START', com_close)
+text = text.replace('VIDEO END', com_open)
+
 cog.out(text)
 ]]]-->
 
@@ -23,12 +36,23 @@ Start a new project or work with an existing git repo.
 Aider works best with GPT-4o & Claude 3.5 Sonnet and can 
 [connect to almost any LLM](https://aider.chat/docs/llms.html).
 
+<!-- 
 <p align="center">
   <img
     src="https://aider.chat/assets/screencast.svg"
     alt="aider screencast"
   >
 </p>
+ -->
+
+<!-- -->
+<p align="center">
+  <video style="max-width: 100%; height: auto;" autoplay loop muted playsinline>
+    <source src="/assets/shell-cmds-small.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
+</p>
+<!-- -->
 
 <p align="center">
   <a href="https://discord.gg/Tv2uQnR88V">
@@ -49,7 +73,7 @@ cog.out(open("aider/website/_includes/get-started.md").read())
 You can get started quickly like this:
 
 ```
-python -m pip install aider-chat
+python -m pip install -U aider-chat
 
 # Change directory into a git repo
 cd /to/your/git/repo

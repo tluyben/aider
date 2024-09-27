@@ -14,7 +14,7 @@ Aider has some built in shortcuts for the most popular OpenAI models and
 has been tested and benchmarked to work well with them:
 
 ```
-python -m pip install aider-chat
+python -m pip install -U aider-chat
 
 export OPENAI_API_KEY=<key> # Mac/Linux
 setx   OPENAI_API_KEY <key> # Windows, restart shell after setx
@@ -29,7 +29,7 @@ aider --4-turbo
 aider --35-turbo
 
 # List models available from OpenAI
-aider --models openai/
+aider --list-models openai/
 ```
 
 You can use `aider --model <model-name>` to use any other OpenAI model.

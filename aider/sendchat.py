@@ -27,7 +27,7 @@ def retry_exceptions():
         litellm.exceptions.ServiceUnavailableError,
         litellm.exceptions.Timeout,
         litellm.exceptions.InternalServerError,
-        litellm.llms.anthropic.AnthropicError,
+        litellm.llms.anthropic.chat.AnthropicError,
     )
 
 
@@ -47,20 +47,33 @@ def lazy_litellm_retry_decorator(func):
 
 
 def send_completion(
-    model_name, messages, functions, stream, temperature=0, extra_headers=None, max_tokens=None
+    model_name,
+    messages,
+    functions,
+    stream,
+    temperature=0,
+    extra_headers=None,
+    extra_body=None,
+    max_tokens=None,
 ):
     from aider.llm import litellm
 
     kwargs = dict(
         model=model_name,
         messages=messages,
-        temperature=temperature,
         stream=stream,
     )
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+
     if functions is not None:
-        kwargs["functions"] = functions
+        function = functions[0]
+        kwargs["tools"] = [dict(type="function", function=function)]
+        kwargs["tool_choice"] = {"type": "function", "function": {"name": function["name"]}}
     if extra_headers is not None:
         kwargs["extra_headers"] = extra_headers
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
 
@@ -83,14 +96,20 @@ def send_completion(
 
 
 @lazy_litellm_retry_decorator
-def simple_send_with_retries(model_name, messages):
+def simple_send_with_retries(model_name, messages, extra_headers=None, extra_body=None):
     try:
-        _hash, response = send_completion(
-            model_name=model_name,
-            messages=messages,
-            functions=None,
-            stream=False,
-        )
+        kwargs = {
+            "model_name": model_name,
+            "messages": messages,
+            "functions": None,
+            "stream": False,
+        }
+        if extra_headers is not None:
+            kwargs["extra_headers"] = extra_headers
+        if extra_body is not None:
+            kwargs["extra_body"] = extra_body
+
+        _hash, response = send_completion(**kwargs)
         return response.choices[0].message.content
     except (AttributeError, litellm.exceptions.BadRequestError):
         return
